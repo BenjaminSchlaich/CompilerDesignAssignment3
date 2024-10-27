@@ -10,6 +10,10 @@ open X86
    plan for implementing the compiler is provided on the project web page.
 *)
 
+(*
+  Lets see whether this comment will still be present after restarting the docker container!
+*)
+
 
 (* helpers ------------------------------------------------------------------ *)
 
