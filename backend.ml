@@ -143,7 +143,14 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins =
      Your function should simply return 0 in those cases
 *)
 let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
-failwith "size_ty not implemented"
+  match t with
+  | I1 -> 8
+  | I64 -> 8
+  | Ptr _ -> 8
+  | Struct l -> List.fold_left (fun s t' -> s + size_ty tdecls t') 0 l
+  | Array (s, t') -> s * size_ty tdecls t'
+  | Namedt s -> size_ty tdecls (lookup tdecls s)
+  | _ -> 0
 
 
 
@@ -252,10 +259,28 @@ let compile_lbl_block fn lbl ctxt blk : elem =
    compile_fdecl.
 
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
+  First six assignments:
+  rdi, rsi, rdx, rcx, r8, r9
+  Following:
+  ((n-7)+2)*8 + rbp
 *)
-let arg_loc (n : int) : operand =
-failwith "arg_loc not implemented"
+let arg_loc (n : int) : operand = (* DONE NOTEST *)
+  match n with
+  | 0 -> Reg X86.Rdi
+  | 1 -> Reg X86.Rsi
+  | 2 -> Reg X86.Rdx
+  | 3 -> Reg X86.Rcx
+  | 4 -> Reg X86.R08
+  | 5 -> Reg X86.R09
+  | _ -> Ind3 ((Lit (Int64.of_int (((n-7)+2)*8))), X86.Rbp)
 
+(*
+  CUSTOM
+  I want to have an easy way of creating integer ranges:
+*)
+let rec (--) (i: int) (j: int): int list = 
+  if i <= j then i :: (succ i -- j)
+  else []
 
 (* We suggest that you create a helper function that computes the
    stack layout for a given function declaration.
@@ -267,7 +292,12 @@ failwith "arg_loc not implemented"
 
 *)
 let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
-failwith "stack_layout not implemented"
+  let nargs = List.length args in
+  let param_layout: layout = List.map (fun (s, n) -> (s, arg_loc n)) @@ List.combine args @@ (0 -- (nargs - 1)) in
+  let loc_lbls: lbl list = List.map fst @@ block.insns @ List.concat (List.map (fun (_, b) -> b.insns) lbled_blocks) in
+  let local_layout: layout = List.map (fun (s, n) -> (s, arg_loc n)) @@ List.combine loc_lbls @@ (nargs -- (nargs + List.length loc_lbls - 1)) in
+  param_layout @ local_layout
+
 
 (* The code for the entry-point of a function must do several things:
 
@@ -286,8 +316,9 @@ failwith "stack_layout not implemented"
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
-failwith "compile_fdecl unimplemented"
-
+  let flayout = stack_layout f_param f_cfg in
+  let layoutP = List.map (fun l -> (Movq, [lookup flayout l])) f_param in
+  [{lbl = ""; global = true; asm = Text layoutP}]
 
 
 (* compile_gdecl ------------------------------------------------------------ *)
