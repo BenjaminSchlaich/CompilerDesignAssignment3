@@ -2,3 +2,4 @@ _build/**
 dune
 dune-project
 main.native
+output/** */
