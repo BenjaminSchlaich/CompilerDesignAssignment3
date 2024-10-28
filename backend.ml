@@ -293,11 +293,14 @@ let rec (--) (i: int) (j: int): int list =
 *)
 let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
   let nargs = List.length args in
-  let stackslot (n: int): operand = Ind3 (Lit (Int64.of_int n), Rbp) in
-  let param_layout: layout = List.combine args @@ List.map stackslot (0 -- (nargs - 1)) in
+  let stackslot (n: int): operand = Ind3 (Lit (Int64.of_int @@ -8*n), Rbp) in
+  let param_layout: layout = List.combine args @@ List.map stackslot (1 -- nargs) in
   let loc_lbls: lbl list = List.map fst @@ block.insns @ List.concat (List.map (fun (_, b) -> b.insns) lbled_blocks) in
-  let local_layout: layout = List.combine loc_lbls @@ List.map stackslot (nargs -- (nargs + List.length loc_lbls - 1)) in
+  let local_layout: layout = List.combine loc_lbls @@ List.map stackslot ((nargs + 1) -- (nargs + List.length loc_lbls)) in
   param_layout @ local_layout
+
+let interleave (l1: 'a list) (l2: 'a list): 'a list =
+  List.fold_right (fun (a, b) l -> a::b::l) (List.combine l1 l2) []
 
 (* The code for the entry-point of a function must do several things:
 
@@ -317,8 +320,11 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
   let flayout = stack_layout f_param f_cfg in
-  let layoutP = List.map2 (fun n l -> (Movq, [arg_loc n; lookup flayout l])) (0--(List.length f_param - 1)) f_param in
-  [{lbl = name; global = true; asm = Text layoutP}]
+  let getterP = List.map2 (fun n l -> (Movq, [arg_loc n; Reg Rax])) (0--(List.length f_param - 1)) f_param in
+  let setterP = List.map (fun l -> (Movq, [Reg Rax; lookup flayout l])) f_param in
+  let paramP = interleave getterP setterP in
+  (*[{lbl = name; global = true; asm = Text paramP}]*)
+  failwith "fuck this"
 
 
 (* compile_gdecl ------------------------------------------------------------ *)

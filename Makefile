@@ -3,14 +3,21 @@ SUBMIT := backend.ml team.txt
 HWNAME := hw03
 ZIPNAME := $(HWNAME)-submit.zip
 
+# Define the output directory
+OUTPUT_DIR = _make_build
+
+# Ensure the output directory exists
+$(OUTPUT_DIR):
+	mkdir -p $(OUTPUT_DIR)
+
 all: main.native
 
 .PHONY: test
 test: main.native
 	./main.native --test
 
-test-full: main.native
-	./main.native --full-test
+test-full: main.native $(OUTPUT_DIR)
+	./main.native --full-test > $(OUTPUT_DIR)/full_test_output.txt
 
 main.native:
 	ocamlbuild -Is util,x86,ll,grading,sharedtests -libs unix,str main.native -use-menhir
@@ -31,3 +38,4 @@ zip: $(SUBMIT)
 clean:
 	ocamlbuild -clean
 	rm -rf output a.out
+	rm -rf $(OUTPUT_DIR)/*
