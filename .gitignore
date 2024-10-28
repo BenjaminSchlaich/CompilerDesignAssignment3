@@ -3,4 +3,4 @@ dune
 dune-project
 main.native
 output/**
-_dune_build/**
+_make_build/**
