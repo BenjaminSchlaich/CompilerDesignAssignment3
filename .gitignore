@@ -4,3 +4,4 @@ dune-project
 main.native
 output/**
 _make_build/**
+a.out
