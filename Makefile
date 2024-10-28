@@ -13,7 +13,7 @@ $(OUTPUT_DIR):
 all: main.native
 
 .PHONY: test
-test: main.native
+test: main.native $(OUTPUT_DIR)
 	./main.native --test
 
 test-full: main.native $(OUTPUT_DIR)

@@ -232,7 +232,35 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
    [fn] - the name of the function containing this terminator
 *)
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
-  failwith "compile_terminator not implemented"
+  let stackSize = Imm (Lit (Int64.of_int (List.length ctxt.layout))) in
+  match t with
+  | Ret (Void, None) -> [
+      Addq, [stackSize; Reg Rax];
+      Popq, [Reg Rbp];
+      Retq, []
+    ]
+  | Ret (Void, Some _) -> failwith "Cannot have Void return type with a Some _ value."
+  | Ret (rty, Some (Const i)) -> [
+      Addq, [stackSize; Reg Rax];
+      Popq, [Reg Rbp];
+      Movq, [Imm (Lit i); Reg Rax];
+      Retq, []
+    ]
+  | Ret (rty, Some (Gid gid)) -> failwith "compile_terminator doesn't support global returns yet."
+  | Ret (rty, Some (Id uid)) -> [
+      Addq, [stackSize; Reg Rax];
+      Popq, [Reg Rbp];
+      Movq, [lookup ctxt.layout uid; Reg Rax];
+      Retq, []
+    ]
+  | Br lbl -> [Jmp, [Imm (Lbl lbl)]]
+  | Cbr (on, l1, l2) -> compile_operand ctxt (Reg Rax) on ::
+    [
+      Cmpq, [Reg Rax; Imm (Lit 0L)];
+      J Eq, [Imm (Lbl l2)];
+      Jmp, [Imm (Lbl l1)]
+    ]
+  | _ -> failwith "compile_terminator not implemented"
 
 
 (* compiling blocks --------------------------------------------------------- *)
@@ -243,7 +271,7 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
    [blk]  - LLVM IR code for the block
 *)
 let compile_block (fn:string) (ctxt:ctxt) (blk:Ll.block) : ins list =
-  failwith "compile_block not implemented"
+  compile_terminator fn ctxt (snd blk.term)
 
 let compile_lbl_block fn lbl ctxt blk : elem =
   Asm.text (mk_lbl fn lbl) (compile_block fn ctxt blk)
@@ -323,8 +351,10 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
   let getterP = List.map2 (fun n l -> (Movq, [arg_loc n; Reg Rax])) (0--(List.length f_param - 1)) f_param in
   let setterP = List.map (fun l -> (Movq, [Reg Rax; lookup flayout l])) f_param in
   let paramP = interleave getterP setterP in
-  (*[{lbl = name; global = true; asm = Text paramP}]*)
-  failwith "fuck this"
+  let stackSize = Imm (Lit (Int64.of_int (List.length flayout))) in
+  let initSequence =
+    (Pushq, [Reg Rbp])::(Subq, [stackSize; Reg Rsp])::paramP in
+  [{lbl = name; global = true; asm = Text initSequence}]
 
 
 (* compile_gdecl ------------------------------------------------------------ *)
