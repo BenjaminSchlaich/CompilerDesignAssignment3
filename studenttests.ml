@@ -15,14 +15,12 @@ let fdecl0 =
 
 let compiledFDeclCode: string = string_of_prog @@ compile_fdecl [] "hola" fdecl0
 
-let compiledBlock: string =
-  let code = compile_block "func" { tdecls = []; layout = []} block0 in
-  let dummyBlock = { lbl = "dummy"; global = true; asm = Text code} in
-  string_of_prog [dummyBlock]
-
 let compile_fdecl_tests =
-  [ ("show fdecl output:\n" ^ compiledFDeclCode ^ "\nend of output.\n", assert_eqf (fun () -> 0) 1);
-    ("show block output:\n" ^ compiledBlock ^ "\nend of output.\n", assert_eqf (fun () -> 0) 1)
+  [ ("show fdecl output:\n" ^ compiledFDeclCode ^ "\nend of output.\n", assert_eqf (fun () -> 0) 1)
+  ]
+
+let term_tests =
+  [ "llprograms/returnvoid.ll", 0L
   ]
 
 let provided_tests : suite = [
