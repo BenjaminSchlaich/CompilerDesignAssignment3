@@ -19,10 +19,18 @@ let compile_fdecl_tests =
   [ ("show fdecl output:\n" ^ compiledFDeclCode ^ "\nend of output.\n", assert_eqf (fun () -> 0) 1)
   ]
 
-let term_tests =
-  [ "llprograms/returnvoid.ll", 0L
+let compile_and_print path =
+  let ast = Driver.parse_ll_file path in
+  let asm_ast = Backend.compile_prog ast in
+  X86.string_of_prog asm_ast
+
+let compile_binop_tests =
+  [
+    ("show llprograms/add.ll output:\n" ^ compile_and_print "llprograms/add.ll" ^ "\nend of output.\n",
+    assert_eqf (fun () -> 0) 1)
   ]
 
 let provided_tests : suite = [
-  GradedTest("compile_fdecl tests", 0, compile_fdecl_tests)
+  GradedTest("compile_fdecl tests", 0, compile_fdecl_tests);
+  GradedTest("compile_binop tests", 0, compile_binop_tests)
 ]

@@ -192,6 +192,34 @@ failwith "compile_gep not implemented"
 
 (* compiling instructions  -------------------------------------------------- *)
 
+let compile_binop (ctxt:ctxt) ((uid:uid), (Binop (bop, t, on1, on2):Ll.insn)) : X86.ins list = 
+  let insMap (llop: bop): opcode = match llop with
+  | Add -> Addq
+  | Sub -> Subq
+  | Mul -> Imulq
+  | Shl -> Shlq
+  | Lshr -> Shrq
+  | Ashr -> Sarq
+  | And -> Andq
+  | Or -> Orq
+  | Xor -> Xorq
+  in
+  match bop with
+  | Sub ->
+    [
+      compile_operand ctxt (Reg Rcx) on1;
+      compile_operand ctxt (Reg Rbx) on2;
+      (Subq, [Reg Rbx; Reg Rcx]);
+      (Movq, [Reg Rcx; lookup ctxt.layout uid])
+    ]
+  | _ ->
+    [
+      compile_operand ctxt (Reg Rcx) on1;
+      compile_operand ctxt (Reg Rbx) on2;
+      (insMap bop, [Reg Rcx; Reg Rbx]);
+      (Movq, [Reg Rbx; lookup ctxt.layout uid])
+    ]
+
 (* The result of compiling a single LLVM instruction might be many x86
    instructions.  We have not determined the structure of this code
    for you. Some of the instructions require only a couple of assembly
@@ -214,7 +242,9 @@ failwith "compile_gep not implemented"
    - Bitcast: does nothing interesting at the assembly level
 *)
 let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
-      failwith "compile_insn not implemented"
+  match i with
+  | Binop (_, _, _, _) -> compile_binop ctxt (uid, i)
+  | _ -> failwith "compile_insn not implemented"
 
 
 
@@ -246,15 +276,15 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
     ]
   | Ret (Void, Some _) -> failwith "Cannot have Void return type with a Some _ value."
   | Ret (rty, Some (Const i)) -> [
-      Addq, [stackSize; Reg Rsp];
       Movq, [Imm (Lit i); Reg Rax];
+      Addq, [stackSize; Reg Rsp];
       Popq, [Reg Rbp];
       Retq, []
     ]
   | Ret (rty, Some (Gid gid)) -> failwith "compile_terminator doesn't support global returns yet."
   | Ret (rty, Some (Id uid)) -> [
-      Addq, [stackSize; Reg Rsp];
       Movq, [lookup ctxt.layout uid; Reg Rax];
+      Addq, [stackSize; Reg Rsp];
       Popq, [Reg Rbp];
       Retq, []
     ]
@@ -276,7 +306,9 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
    [blk]  - LLVM IR code for the block
 *)
 let compile_block (fn:string) (ctxt:ctxt) (blk:Ll.block) : ins list =
-  compile_terminator fn ctxt (snd blk.term)
+  let termP = compile_terminator fn ctxt (snd blk.term) in
+  let insP = List.concat_map (compile_insn ctxt) blk.insns in
+  insP @ termP
 
 let compile_lbl_block fn lbl ctxt blk : elem =
   Asm.text (mk_lbl fn lbl) (compile_block fn ctxt blk)
@@ -359,7 +391,7 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
   let stackSize = Imm (Lit (Int64.of_int (8 * (List.length flayout)))) in
   let iblockP = compile_block name { tdecls = tdecls; layout = flayout} (fst f_cfg) in
   let initSequence =
-    (Pushq, [Reg Rbp])::(Subq, [stackSize; Reg Rsp])::paramP in
+    (Pushq, [Reg Rbp])::(Movq, [Reg Rsp; Reg Rbp])::(Subq, [stackSize; Reg Rsp])::paramP in
   [{lbl = name; global = true; asm = Text (
     initSequence @ iblockP
     )}]
