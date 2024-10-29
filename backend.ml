@@ -204,21 +204,12 @@ let compile_binop (ctxt:ctxt) ((uid:uid), (Binop (bop, t, on1, on2):Ll.insn)) : 
   | Or -> Orq
   | Xor -> Xorq
   in
-  match bop with
-  | Sub ->
-    [
-      compile_operand ctxt (Reg Rcx) on1;
-      compile_operand ctxt (Reg Rbx) on2;
-      (Subq, [Reg Rbx; Reg Rcx]);
-      (Movq, [Reg Rcx; lookup ctxt.layout uid])
-    ]
-  | _ ->
-    [
-      compile_operand ctxt (Reg Rcx) on1;
-      compile_operand ctxt (Reg Rbx) on2;
-      (insMap bop, [Reg Rcx; Reg Rbx]);
-      (Movq, [Reg Rbx; lookup ctxt.layout uid])
-    ]
+  [
+    compile_operand ctxt (Reg Rbx) on1;
+    compile_operand ctxt (Reg Rcx) on2;
+    (insMap bop, [Reg Rcx; Reg Rbx]);
+    (Movq, [Reg Rbx; lookup ctxt.layout uid])
+  ]
 
 (* The result of compiling a single LLVM instruction might be many x86
    instructions.  We have not determined the structure of this code
@@ -271,7 +262,7 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
   match t with
   | Ret (Void, None) -> [
       Addq, [stackSize; Reg Rsp];
-      Popq, [Reg Rbp];
+      Popq, [Reg Rbp]; 
       Retq, []
     ]
   | Ret (Void, Some _) -> failwith "Cannot have Void return type with a Some _ value."
@@ -288,7 +279,7 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
       Popq, [Reg Rbp];
       Retq, []
     ]
-  | Br lbl -> [Jmp, [Imm (Lbl lbl)]]
+  | Br lbl -> [Jmp, [Imm (Lbl (mk_lbl fn lbl))]]
   | Cbr (on, l1, l2) -> compile_operand ctxt (Reg Rax) on ::
     [
       Cmpq, [Imm (Lit 0L); Reg Rax];
@@ -389,14 +380,18 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
   let setterP = List.map (fun l -> (Movq, [Reg Rax; lookup flayout l])) f_param in
   let paramP = interleave getterP setterP in
   let stackSize = Imm (Lit (Int64.of_int (8 * (List.length flayout)))) in
-  let iblockP = compile_block name { tdecls = tdecls; layout = flayout} (fst f_cfg) in
+  let ctxt = { tdecls = tdecls; layout = flayout} in
+  let iblockP = compile_block name ctxt (fst f_cfg) in
   let initSequence =
     (Pushq, [Reg Rbp])::(Movq, [Reg Rsp; Reg Rbp])::(Subq, [stackSize; Reg Rsp])::paramP in
-  [{lbl = name; global = true; asm = Text (
+  let initBlock = 
+  {lbl = name; global = true; asm = Text (
     initSequence @ iblockP
-    )}]
-  
+  )} in
+  initBlock :: List.map (fun (lbl, b) -> compile_lbl_block name lbl ctxt b) (snd f_cfg)
 
+  
+(* compile_lbl_block fn lbl ctxt blk : elem = *)
 
 (* compile_gdecl ------------------------------------------------------------ *)
 (* Compile a global value into an X86 global data declaration and map

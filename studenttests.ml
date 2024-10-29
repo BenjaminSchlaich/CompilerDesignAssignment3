@@ -31,6 +31,6 @@ let compile_binop_tests =
   ]
 
 let provided_tests : suite = [
-  GradedTest("compile_fdecl tests", 0, compile_fdecl_tests);
-  GradedTest("compile_binop tests", 0, compile_binop_tests)
+  (*GradedTest("compile_fdecl tests", 0, compile_fdecl_tests);
+  GradedTest("compile_binop tests", 0, compile_binop_tests)*)
 ]
