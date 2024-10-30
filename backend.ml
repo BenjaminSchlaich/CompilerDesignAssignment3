@@ -300,10 +300,9 @@ let compile_cmp (ctxt:ctxt) ((uid:uid), (Icmp (llcc, _, on1, on2):Ll.insn)) : X8
   | Ll.Sgt -> X86.Gt
   | Ll.Sge -> X86.Ge in
   [
-    Movq, [(Imm (Lit 0L)); Reg Rax];
     compile_operand ctxt (Reg Rbx) on1;
     compile_operand ctxt (Reg Rcx) on2;
-    Cmpq, [Reg Rbx; Reg Rcx];
+    Cmpq, [Reg Rcx; Reg Rbx];
     Set cc, [Reg Rax];
     Movq, [Reg Rax; lookup ctxt.layout uid]
   ]
@@ -430,7 +429,7 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
   | Br lbl -> [Jmp, [Imm (Lbl (mk_lbl fn lbl))]]
   | Cbr (on, l1, l2) -> compile_operand ctxt (Reg Rax) on ::
     [
-      Cmpq, [Imm (Lit 0L); Reg Rax];
+      Cmpq, [Imm (Lit 1L); Reg Rax];
       J Eq, [Imm (Lbl (mk_lbl fn l1))];
       Jmp, [Imm (Lbl (mk_lbl fn l2))]
     ]
