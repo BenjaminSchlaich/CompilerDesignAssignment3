@@ -17,6 +17,27 @@ open X86
 
 (* helpers ------------------------------------------------------------------ *)
 
+
+
+(*
+  CUSTOM
+  I want to have an easy way of creating integer ranges:
+*)
+let rec (--) (i: int) (j: int): int list = 
+  if i <= j then i :: (succ i -- j)
+  else []
+
+(* and to drop the first n elements from a list: *)
+let rec drop (i: int) (l: 'a list): 'a list =
+  match l with
+  | x::xs -> if i > 0 then drop (i-1) xs else l
+  | [] -> []
+
+let rec take (i: int) (l: 'a list): 'a list =
+  match l with
+  | x::xs -> if i > 0 then x :: take (i-1) xs else []
+  | [] -> []
+
 (* Map LL comparison operations to X86 condition codes *)
 let compile_cnd = function
   | Ll.Eq  -> X86.Eq
@@ -188,7 +209,27 @@ let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
 let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
 failwith "compile_gep not implemented"
 
+(* I moved this from the head of compile_fdecl down here, s.t. i can use it withing compile_call! *)
+(* This helper function computes the location of the nth incoming
+   function argument: either in a register or relative to %rbp,
+   according to the calling conventions.  You might find it useful for
+   compile_fdecl.
 
+   [ NOTE: the first six arguments are numbered 0 .. 5 ]
+  First six assignments:
+  rdi, rsi, rdx, rcx, r8, r9
+  Following:
+  ((n-7)+2)*8 + rbp
+*)
+let arg_loc (n : int) : operand = (* DONE NOTEST *)
+  match n with
+  | 0 -> Reg X86.Rdi
+  | 1 -> Reg X86.Rsi
+  | 2 -> Reg X86.Rdx
+  | 3 -> Reg X86.Rcx
+  | 4 -> Reg X86.R08
+  | 5 -> Reg X86.R09
+  | _ -> Ind3 ((Lit (Int64.of_int (((n-6)+2)*8))), X86.Rbp)
 
 (* compiling instructions  -------------------------------------------------- *)
 
@@ -210,6 +251,44 @@ let compile_binop (ctxt:ctxt) ((uid:uid), (Binop (bop, t, on1, on2):Ll.insn)) : 
     (insMap bop, [Reg Rcx; Reg Rbx]);
     (Movq, [Reg Rbx; lookup ctxt.layout uid])
   ]
+
+let compile_cmp (ctxt:ctxt) ((uid:uid), (Icmp (llcc, t, on1, on2):Ll.insn)) : X86.ins list = 
+  let cc = match llcc with
+  | Ll.Eq -> X86.Eq
+  | Ll.Ne -> X86.Neq
+  | Ll.Slt -> X86.Lt
+  | Ll.Sle -> X86.Le
+  | Ll.Sgt -> X86.Gt
+  | Ll.Sge -> X86.Ge in
+  [
+    Movq, [(Imm (Lit 0L)); Reg Rax];
+    Set cc, [Reg Rax];
+    Movq, [Reg Rax; lookup ctxt.layout uid]
+  ]
+
+let compile_alloc (ctxt:ctxt) ((uid:uid), (Alloca t: Ll.insn)) : X86.ins list = 
+  [
+    Subq, [(Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t)))); Reg Rsp];
+    Movq, [Reg Rsp; lookup ctxt.layout uid]
+  ]
+
+
+  (* TODO: also push the 7+ arguments onto the stack. reverse the order!!*)
+let compile_call  (ctxt:ctxt) ((uid:uid), (Call (aft, fo, ons): Ll.insn)) : X86.ins list =
+  let fid = match fo with
+    | Gid gid -> gid
+    | _ -> failwith "compile_call: expected a Gid as the operand to Call, but got something else" in
+  let caller_saved_regs = [Rax; Rcx ;Rdx ;Rsi ;Rdi ;R08 ;R09 ;R10 ;R11] in
+  let saveRegsP = List.map (fun (r: reg): ins -> Pushq, [(Reg r)]) caller_saved_regs in
+  let restRegsP = List.map (fun (r: reg): ins -> Popq, [(Reg r)]) (List.rev caller_saved_regs) in
+  let prepReg (n: int) (on: Ll.operand): ins list = compile_operand ctxt (Reg Rax) on :: [Movq, [Reg Rax; arg_loc n]] in
+  let regOpns = take 6 @@ List.map snd ons in
+  let stackOpns = List.rev @@ drop 6 @@ List.map snd ons in
+  let prepRegsP = List.concat @@ List.map2 prepReg (0 -- (List.length regOpns - 1)) regOpns in
+  let prepOverP = List.concat_map (fun (on: Ll.operand): ins list -> compile_operand ctxt (Reg Rax) on :: [Pushq, [Reg Rax]]) stackOpns in
+  let storeResP = [Movq, [Reg Rax; lookup ctxt.layout uid]] in
+  saveRegsP @ prepRegsP @ prepOverP @ [Callq, [Imm (Lbl fid)]] @ storeResP @ restRegsP
+
 
 (* The result of compiling a single LLVM instruction might be many x86
    instructions.  We have not determined the structure of this code
@@ -235,6 +314,18 @@ let compile_binop (ctxt:ctxt) ((uid:uid), (Binop (bop, t, on1, on2):Ll.insn)) : 
 let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
   match i with
   | Binop (_, _, _, _) -> compile_binop ctxt (uid, i)
+  | Icmp (_, _, _, _) -> compile_cmp ctxt (uid, i)
+  | Alloca _ -> compile_alloc ctxt (uid, i)
+  | Load (_, on) -> compile_operand ctxt (Reg Rax) on :: [  (* type check? *)
+        Movq, [Ind2 Rax; Reg Rax];
+        Movq, [Reg Rax; lookup ctxt.layout uid]
+      ]
+  | Store (_, on1, on2) -> compile_operand ctxt (Reg Rax) on1 :: 
+      compile_operand ctxt (Reg Rbx) on2 :: [
+        Movq, [Reg Rax; Ind2 Rbx] 
+      ]
+  | Call (_, _, _) -> compile_call ctxt (uid, i)
+  | Bitcast (t1, on, t2) -> []
   | _ -> failwith "compile_insn not implemented"
 
 
@@ -258,24 +349,23 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
    [fn] - the name of the function containing this terminator
 *)
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
-  let stackSize = Imm (Lit (Int64.of_int (8 * (List.length ctxt.layout)))) in
   match t with
   | Ret (Void, None) -> [
-      Addq, [stackSize; Reg Rsp];
+      Movq, [Reg Rbp; Reg Rsp];
       Popq, [Reg Rbp]; 
       Retq, []
     ]
   | Ret (Void, Some _) -> failwith "Cannot have Void return type with a Some _ value."
   | Ret (rty, Some (Const i)) -> [
       Movq, [Imm (Lit i); Reg Rax];
-      Addq, [stackSize; Reg Rsp];
+      Movq, [Reg Rbp; Reg Rsp];
       Popq, [Reg Rbp];
       Retq, []
     ]
   | Ret (rty, Some (Gid gid)) -> failwith "compile_terminator doesn't support global returns yet."
   | Ret (rty, Some (Id uid)) -> [
       Movq, [lookup ctxt.layout uid; Reg Rax];
-      Addq, [stackSize; Reg Rsp];
+      Movq, [Reg Rbp; Reg Rsp];
       Popq, [Reg Rbp];
       Retq, []
     ]
@@ -307,36 +397,6 @@ let compile_lbl_block fn lbl ctxt blk : elem =
 
 
 (* compile_fdecl ------------------------------------------------------------ *)
-
-
-(* This helper function computes the location of the nth incoming
-   function argument: either in a register or relative to %rbp,
-   according to the calling conventions.  You might find it useful for
-   compile_fdecl.
-
-   [ NOTE: the first six arguments are numbered 0 .. 5 ]
-  First six assignments:
-  rdi, rsi, rdx, rcx, r8, r9
-  Following:
-  ((n-7)+2)*8 + rbp
-*)
-let arg_loc (n : int) : operand = (* DONE NOTEST *)
-  match n with
-  | 0 -> Reg X86.Rdi
-  | 1 -> Reg X86.Rsi
-  | 2 -> Reg X86.Rdx
-  | 3 -> Reg X86.Rcx
-  | 4 -> Reg X86.R08
-  | 5 -> Reg X86.R09
-  | _ -> Ind3 ((Lit (Int64.of_int (((n-7)+2)*8))), X86.Rbp)
-
-(*
-  CUSTOM
-  I want to have an easy way of creating integer ranges:
-*)
-let rec (--) (i: int) (j: int): int list = 
-  if i <= j then i :: (succ i -- j)
-  else []
 
 (* We suggest that you create a helper function that computes the
    stack layout for a given function declaration.
