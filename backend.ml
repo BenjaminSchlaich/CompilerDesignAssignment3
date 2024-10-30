@@ -178,6 +178,17 @@ let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
   | Namedt s -> size_ty tdecls (lookup tdecls s)
   | _ -> 0
 
+(* DEBUG only: *)
+let rec printTy (tdecls: (tid * ty) list) (t: ty): string = match t with
+| Void -> "Void"
+| I1 -> "I1"
+| I8 -> "I8"
+| I64 -> "I64"
+| Ptr t' -> printTy tdecls t' ^ "*" 
+| Struct ts -> "{" ^ List.fold_left (fun s t -> s ^ ", " ^ printTy tdecls t) "" ts ^ "}"
+| Array (n, t') -> "[" ^ string_of_int n  ^ " x " ^ printTy tdecls t' ^ "]"
+| Fun (ts, tr)-> "(" ^ List.fold_left (fun s t -> s ^ ", " ^ printTy tdecls t) "" ts ^ ") -> " ^ printTy tdecls tr
+| Namedt lbl -> printTy tdecls (lookup tdecls lbl) 
 
 
 
@@ -211,25 +222,28 @@ let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : 
     then (Int64.add (Int64.of_int (size_ty ctxt.tdecls @@ List.hd ts)) (structOffset (List.tl ts) (Int64.pred n)))
     else 0L
   in
-  let i0 = match path with
-  | i::is -> i
+  let (i0, is) = match path with
+  | i::is -> i, is
   | [] -> failwith "compile_gep: missing first index, this can be 0 but must be supplied"
   in
-  let rec translate (tp: ty) (p: Ll.operand list): ins list = match tp with
-  | Struct ts -> (match p with
-    | Const i :: p' -> (Addq, [Imm (Lit (structOffset ts i)); Reg Rax]) :: translate (List.nth ts (Int64.to_int i)) p'
-    | _ -> failwith "compile_gep: struct expects a constant index, but was provided something else"
-    )
-  | Array (n, tp') -> (
-    let elemSize = Int64.of_int @@ size_ty ctxt.tdecls tp' in (* TODO: out of bounds check!*)
-    [ compile_operand ctxt (Reg Rbx) (List.hd p);
-      Imulq, [Imm (Lit elemSize); Reg Rbx];
-      Addq, [Reg Rbx; Reg Rax]]
-      @ translate tp' (List.tl p))
-  | _ -> failwith "copmile_get: invalid path: a type other that Array and Struct was provided"
+  let rec translate (tp: ty) (p: Ll.operand list): ins list =
+    if List.length p = 0 then [] else
+    match tp with
+    | Namedt nt -> translate (lookup ctxt.tdecls nt) p
+    | Struct ts -> (match p with
+      | Const i :: p' -> (Addq, [Imm (Lit (structOffset ts i)); Reg Rax]) :: translate (List.nth ts (Int64.to_int i)) p'
+      | _ -> failwith "compile_gep: struct expects a constant index, but was provided something else"
+      )
+    | Array (n, tp') -> (
+      let elemSize = Int64.of_int @@ size_ty ctxt.tdecls tp' in (* TODO: out of bounds check!*)
+      [ compile_operand ctxt (Reg Rbx) (List.hd p);
+        Imulq, [Imm (Lit elemSize); Reg Rbx];
+        Addq, [Reg Rbx; Reg Rax]]
+        @ translate tp' (List.tl p))
+    | _ -> failwith ("copmile_get: invalid path: expected Array or Struct, but got: " ^ printTy ctxt.tdecls tp)
   in
   match op with
-  | (Ptr t, on) -> compile_operand ctxt (Reg Rax) on :: translate t path
+  | (Ptr t, on) -> compile_operand ctxt (Reg Rax) on :: translate t is (*(Imulq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); Reg Rax])*)
   | _ -> failwith "compile_gep: expected pointer type, but got something else"
 
 (* I moved this from the head of compile_fdecl down here, s.t. i can use it withing compile_call! *)
