@@ -207,7 +207,30 @@ let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
       by the path so far
 *)
 let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
-failwith "compile_gep not implemented"
+  let rec structOffset (ts: ty list) (n: int64): int64 = if n > 0L
+    then (Int64.add (Int64.of_int (size_ty ctxt.tdecls @@ List.hd ts)) (structOffset (List.tl ts) (Int64.pred n)))
+    else 0L
+  in
+  let i0 = match path with
+  | i::is -> i
+  | [] -> failwith "compile_gep: missing first index, this can be 0 but must be supplied"
+  in
+  let rec translate (tp: ty) (p: Ll.operand list): ins list = match tp with
+  | Struct ts -> (match p with
+    | Const i :: p' -> (Addq, [Imm (Lit (structOffset ts i)); Reg Rax]) :: translate (List.nth ts (Int64.to_int i)) p'
+    | _ -> failwith "compile_gep: struct expects a constant index, but was provided something else"
+    )
+  | Array (n, tp') -> (
+    let elemSize = Int64.of_int @@ size_ty ctxt.tdecls tp' in (* TODO: out of bounds check!*)
+    [ compile_operand ctxt (Reg Rbx) (List.hd p);
+      Imulq, [Imm (Lit elemSize); Reg Rbx];
+      Addq, [Reg Rbx; Reg Rax]]
+      @ translate tp' (List.tl p))
+  | _ -> failwith "copmile_get: invalid path: a type other that Array and Struct was provided"
+  in
+  match op with
+  | (Ptr t, on) -> compile_operand ctxt (Reg Rax) on :: translate t path
+  | _ -> failwith "compile_gep: expected pointer type, but got something else"
 
 (* I moved this from the head of compile_fdecl down here, s.t. i can use it withing compile_call! *)
 (* This helper function computes the location of the nth incoming
@@ -345,6 +368,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
       ]
   | Call (_, _, _) -> compile_call ctxt (uid, i)
   | Bitcast (_, _, _) -> compile_bitcast ctxt (uid, i)
+  | Gep (t, op, onl) -> compile_gep ctxt (t, op) onl @ [Movq, [Reg Rax; lookup ctxt.layout uid]]
   | _ -> failwith "compile_insn not implemented"
 
 
