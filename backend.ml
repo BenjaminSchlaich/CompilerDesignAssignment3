@@ -26,11 +26,11 @@ open X86
 let rec (--) (i: int) (j: int): int list = 
   if i <= j then i :: (succ i -- j)
   else []
-
+ 
 (* and to drop the first n elements from a list: *)
 let rec drop (i: int) (l: 'a list): 'a list =
   match l with
-  | x::xs -> if i > 0 then drop (i-1) xs else l
+  | _::xs -> if i > 0 then drop (i-1) xs else l
   | [] -> []
 
 let rec take (i: int) (l: 'a list): 'a list =
@@ -232,8 +232,9 @@ let arg_loc (n : int) : operand = (* DONE NOTEST *)
   | _ -> Ind3 ((Lit (Int64.of_int (((n-6)+2)*8))), X86.Rbp)
 
 (* compiling instructions  -------------------------------------------------- *)
-
-let compile_binop (ctxt:ctxt) ((uid:uid), (Binop (bop, t, on1, on2):Ll.insn)) : X86.ins list = 
+ 
+(* type checking?! *)
+let compile_binop (ctxt:ctxt) ((uid:uid), (Binop (bop, _, on1, on2):Ll.insn)) : X86.ins list = 
   let insMap (llop: bop): opcode = match llop with
   | Add -> Addq
   | Sub -> Subq
@@ -252,7 +253,8 @@ let compile_binop (ctxt:ctxt) ((uid:uid), (Binop (bop, t, on1, on2):Ll.insn)) : 
     (Movq, [Reg Rbx; lookup ctxt.layout uid])
   ]
 
-let compile_cmp (ctxt:ctxt) ((uid:uid), (Icmp (llcc, t, on1, on2):Ll.insn)) : X86.ins list = 
+(* type checking?! *)
+let compile_cmp (ctxt:ctxt) ((uid:uid), (Icmp (llcc, _, on1, on2):Ll.insn)) : X86.ins list = 
   let cc = match llcc with
   | Ll.Eq -> X86.Eq
   | Ll.Ne -> X86.Neq
@@ -262,6 +264,9 @@ let compile_cmp (ctxt:ctxt) ((uid:uid), (Icmp (llcc, t, on1, on2):Ll.insn)) : X8
   | Ll.Sge -> X86.Ge in
   [
     Movq, [(Imm (Lit 0L)); Reg Rax];
+    compile_operand ctxt (Reg Rbx) on1;
+    compile_operand ctxt (Reg Rcx) on2;
+    Cmpq, [Reg Rbx; Reg Rcx];
     Set cc, [Reg Rax];
     Movq, [Reg Rax; lookup ctxt.layout uid]
   ]
@@ -274,7 +279,8 @@ let compile_alloc (ctxt:ctxt) ((uid:uid), (Alloca t: Ll.insn)) : X86.ins list =
 
 
   (* TODO: also push the 7+ arguments onto the stack. reverse the order!!*)
-let compile_call  (ctxt:ctxt) ((uid:uid), (Call (aft, fo, ons): Ll.insn)) : X86.ins list =
+  (* TODO: type checking?! *)
+let compile_call  (ctxt:ctxt) ((uid:uid), (Call (_, fo, ons): Ll.insn)) : X86.ins list =
   let fid = match fo with
     | Gid gid -> gid
     | _ -> failwith "compile_call: expected a Gid as the operand to Call, but got something else" in
@@ -289,6 +295,19 @@ let compile_call  (ctxt:ctxt) ((uid:uid), (Call (aft, fo, ons): Ll.insn)) : X86.
   let storeResP = [Movq, [Reg Rax; lookup ctxt.layout uid]] in
   saveRegsP @ prepRegsP @ prepOverP @ [Callq, [Imm (Lbl fid)]] @ storeResP @ restRegsP
 
+(* type checking?! *)
+let compile_bitcast  (ctxt:ctxt) ((uid:uid), (Bitcast (_, on, t2): Ll.insn)) : X86.ins list =
+  let bitmask = match t2 with
+  | Void -> 0L
+  | I1 -> 1L
+  | I8 -> 255L
+  | _ -> Int64.minus_one
+  in
+  compile_operand ctxt (Reg Rax) on :: [
+    Movq, [Imm (Lit bitmask); Reg Rbx];
+    Andq, [Reg Rax; Reg Rbx];
+    Movq, [Reg Rbx; lookup ctxt.layout uid]
+  ]
 
 (* The result of compiling a single LLVM instruction might be many x86
    instructions.  We have not determined the structure of this code
@@ -325,7 +344,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
         Movq, [Reg Rax; Ind2 Rbx] 
       ]
   | Call (_, _, _) -> compile_call ctxt (uid, i)
-  | Bitcast (t1, on, t2) -> []
+  | Bitcast (_, _, _) -> compile_bitcast ctxt (uid, i)
   | _ -> failwith "compile_insn not implemented"
 
 
@@ -348,6 +367,7 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
 
    [fn] - the name of the function containing this terminator
 *)
+(* type checking?! *)
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
   match t with
   | Ret (Void, None) -> [
@@ -356,14 +376,14 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
       Retq, []
     ]
   | Ret (Void, Some _) -> failwith "Cannot have Void return type with a Some _ value."
-  | Ret (rty, Some (Const i)) -> [
+  | Ret (_, Some (Const i)) -> [
       Movq, [Imm (Lit i); Reg Rax];
       Movq, [Reg Rbp; Reg Rsp];
       Popq, [Reg Rbp];
       Retq, []
-    ]
-  | Ret (rty, Some (Gid gid)) -> failwith "compile_terminator doesn't support global returns yet."
-  | Ret (rty, Some (Id uid)) -> [
+    ] 
+  | Ret (_, Some (Gid gid)) -> failwith "compile_terminator doesn't support global returns yet."
+  | Ret (_, Some (Id uid)) -> [
       Movq, [lookup ctxt.layout uid; Reg Rax];
       Movq, [Reg Rbp; Reg Rsp];
       Popq, [Reg Rbp];
@@ -373,8 +393,8 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
   | Cbr (on, l1, l2) -> compile_operand ctxt (Reg Rax) on ::
     [
       Cmpq, [Imm (Lit 0L); Reg Rax];
-      J Eq, [Imm (Lbl l2)];
-      Jmp, [Imm (Lbl l1)]
+      J Eq, [Imm (Lbl (mk_lbl fn l1))];
+      Jmp, [Imm (Lbl (mk_lbl fn l2))]
     ]
   | _ -> failwith "compile_terminator not implemented"
 
@@ -434,9 +454,10 @@ let interleave (l1: 'a list) (l2: 'a list): 'a list =
    - the function entry code should allocate the stack storage needed
      to hold all of the local stack slots.
 *)
+(* type checking?! *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
   let flayout = stack_layout f_param f_cfg in
-  let getterP = List.map2 (fun n l -> (Movq, [arg_loc n; Reg Rax])) (0--(List.length f_param - 1)) f_param in
+  let getterP = List.map (fun n -> (Movq, [arg_loc n; Reg Rax])) (0--(List.length f_param - 1)) in
   let setterP = List.map (fun l -> (Movq, [Reg Rax; lookup flayout l])) f_param in
   let paramP = interleave getterP setterP in
   let stackSize = Imm (Lit (Int64.of_int (8 * (List.length flayout)))) in
@@ -463,13 +484,13 @@ let rec compile_ginit : ginit -> X86.data list = function
   | GInt c    -> [Quad (Lit c)]
   | GString s -> [Asciz s]
   | GArray gs | GStruct gs -> List.map compile_gdecl gs |> List.flatten
-  | GBitcast (t1,g,t2) -> compile_ginit g
+  | GBitcast (_ ,g,_ ) -> compile_ginit g
 
 and compile_gdecl (_, g) = compile_ginit g
 
 
 (* compile_prog ------------------------------------------------------------- *)
-let compile_prog {tdecls; gdecls; fdecls} : X86.prog =
+let compile_prog {tdecls; gdecls; fdecls; _} : X86.prog =
   let g = fun (lbl, gdecl) -> Asm.data (Platform.mangle lbl) (compile_gdecl gdecl) in
   let f = fun (name, fdecl) -> compile_fdecl tdecls name fdecl in
   (List.map g gdecls) @ (List.map f fdecls |> List.flatten)
